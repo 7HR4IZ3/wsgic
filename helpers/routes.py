@@ -30,6 +30,7 @@ class Routes(dict):
 		self.data.__init__(**kw)
 		self.start, self.end, self.sep, self.engine = start, end, seperator, engine
 		self.filters = {}
+		self.rfilters = {}
 		self.config = {
 			"base_view": None,
 			"app": None
@@ -37,6 +38,9 @@ class Routes(dict):
 	
 	def all(self):
 		return self
+		
+	def filter(self, name, regex, py=None, url=None):
+	    self.rfilters[name] = lambda conf: (regex, py, url)
 
 	def set(self, start=None, end=None, seperator=None,  engine=None):
 		self.start, self.end, self.sep, self.engine = start or self.start, end or self.end, seperator or self.sep, engine or self.engine
@@ -75,7 +79,7 @@ class Routes(dict):
 		line = "<"+line.strip()+">"
 		return line
 	
-	def remake_simple(self, line, s="", e="", p=""):
+	def remake_simple(self, line, s="<", e=">", p=":"):
 		if s != "":line = line.replace(s, "<")
 		if p != "": line = line.replace(p, ":")
 		if e != "":line = line.replace(e, ">")
@@ -284,6 +288,8 @@ Usage:
 
 	def order(self, routes={}, url=""):
 		routes = routes if routes != [] else self.routes.all()
+		for x in routes.rfilters:
+		    self.app.router.add_filter(x, routes.rfilters[x])
 		def make(routes, base_url):
 			for x in routes:
 				if type(routes[x]) is tuple:

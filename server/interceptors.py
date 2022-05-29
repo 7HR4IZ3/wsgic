@@ -35,28 +35,33 @@ def views_handler(app):
 # 		try:session = store.get(sid)
 # 		except AttributeError:pass
 	
-# 	request.environ[options.get("environ_key", "wsgic_session")] = session
+# 	set_global(options.get("environ_key", "wsgic_session"), session)
 	
 # 	app.hook("after_request")(app._save_sess(store, session))
 
-def session_handler():
+def session_handler(app):
 	cfg = get_global("config")
 	opt = cfg.get("session", raw=True)
 	session_store = FilesystemSessionStore()
-	sid = request.cookies.get("session_id")
+	sid = request.get_cookie("session_id")
+	print(sid)
 
 	if sid is None:
-		request.session = session_store.new()
+		session = session_store.new()
 	else:
-		request.session = session_store.get(sid)
-	request.environ['wsgic_session'] = request.session
-
-	if request.session.should_save:
-		session_store.save(request.session)
-		# response.set_cookie("session_id", request.session.sid, secret=opt.get(nm+"secret"), maxage=opt.get(nm+"age"), domain=opt.get(nm+"domain"), path=opt.get(nm+"path"), secure=opt.get(nm+"secure"), samesite=opt.get(nm+"samesite"))
-		options = {x.lower(): "off" if opt[x] == False else opt[x] for x in opt if x not in ("STORE", "NAME", "KEY") and opt[x] not in (None)}
-		response.set_cookie("session_id", request.session.sid, **options)
-
+		session = session_store.get(sid)
+	options = {x.lower(): "off" if opt[x] == False else opt[x] for x in opt if x not in ("STORE", "NAME", "KEY") and opt[x] is not None}
+	
+	set_global(cfg.get("environ_key", "wsgic_session"), session)
+	set_global("session_store", session_store)
+	
+	def save_sess():
+		if session.should_save:
+			session_store.save(session)
+			response.set_cookie("session_id", session.sid, **options)
+			print(session.sid)
+			print("Saved session", session, options)
+	app.hook("after_request")(save_sess)
 
 def database_handler(app, config):
 	# db =  Database(app, config)

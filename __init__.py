@@ -5,9 +5,10 @@ from .helpers import config
 from .helpers.extra import get_global
 
 class WSGIApp(Bottle):
-	def __init__(self, pkg, conf="settings", **opts):
+	def __init__(self, file, conf="settings", **opts):
 		super().__init__()
-		self.pkg = pkg
+		fname = file.split("/")
+		self.pkg = fname[-1].replace(".py", "") if fname[-1] != "__init__.py" else fname[-2].replace(".py", "")
 		self.stack = app
 		self.appConfig = config
 		self.conf = conf

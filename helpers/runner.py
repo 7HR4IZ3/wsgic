@@ -1,10 +1,17 @@
 from wsgic.backend.bottle import run, app as App
 from wsgic.server import interceptor, load
 from wsgic.helpers.extra import set_global, get_global
-
+from pathlib import Path
+import sys, os
 
 class Apprunner:
 	def __init__(self, app):
+		root = os.getcwd()
+		sys.path.append(
+			root + "/apps"
+		)
+		set_global("APPDIR", root+'/apps')
+		set_global("ROOTDIR", root)
 		set_global("installed_apps", [])
 		set_global("router", None)
 		self.app = load(

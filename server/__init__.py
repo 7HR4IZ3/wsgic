@@ -9,7 +9,7 @@ from .interceptors import (
 )
 
 def interceptor(app):
-	session_handler()
+	session_handler(app)
 	#Thread(target=views_handler, args=(app,)).start()
 	#Thread(target=routes_handler, args=(app,)).start()
 	#Thread(target=session_handler).start()

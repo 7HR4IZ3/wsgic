@@ -25,7 +25,8 @@ from logging import getLogger
 from smtplib import SMTP, SMTP_SSL
 from threading import Thread
 from time import time
-from wsgic.backend.bottle import template, redirect, request
+from wsgic.backend.bottle import template, redirect
+from wsgic.helpers.extra import get_global
 import hashlib
 import os
 import re
@@ -926,7 +927,7 @@ class Cork(BaseCork):
 	@property
 	def _session(self):
 		"""Get session"""
-		return request.environ[self.environ_key]
+		return get_global(self.environ_key)
 
 	def _save_session(self):
 		pass

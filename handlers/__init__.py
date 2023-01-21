@@ -1,0 +1,1 @@
+from wsgic.thirdparty.bottle import static_file

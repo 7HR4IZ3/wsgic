@@ -200,6 +200,8 @@ class Runner:
 
     def __init__(self, app=os.environ.get("WSGIC_APP"), *args):
         args = self.__get_run_parser().parse_args(args)
+        if not app:
+            raise ValueError("Appname not specified.")
         appname = app
         _sg("APPDIR", _root+'/apps/'+app)
         _sg("APPMODULE", app)

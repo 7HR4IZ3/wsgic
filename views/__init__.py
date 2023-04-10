@@ -47,7 +47,7 @@ class View(BaseView):
     def __init__(self, *args, **kwargs):
         self.__name__ = self.__class__.__name__
         super().__init__(*args, **kwargs)
-        self._ = [
+        self._routes = [
             Route("", "GET", self.get, name="_get"),
             Route("", "POST", self.post, name="_post"),
             Route("<id:int>", "GET", self.retrieve, name="_retrieve"),
@@ -72,11 +72,11 @@ class FunctionView(BaseView):
 
     def __init__(self):
         super().__init__()
-        self._ = []
+        self._routes = []
         self._restricted_methods = self._restricted_methods or []
 
         for item in self.__class__.__dict__:
-            data = self.__class__.__dict__[item]
+            data = getattr(self, item)
 
             if isinstance(data, (types.MethodType, types.LambdaType)) and not item.startswith("_") and item not in self._restricted_methods:
                 if item.lower().startswith("get_"):
@@ -94,36 +94,26 @@ class FunctionView(BaseView):
                 else:
                     name = item
                     method = "GET"
+
+                if name == "index":
+                    name = ""
+
                 paths = list(self._yieldroutes(data, name=name or "/"))
                 for path in paths:
-                    self._.append(
-                        Route(path, method, data, name="_"+item)
+                    self._routes.append(
+                        Route(path, method, data, name=getattr(data, "__route_name__", "_"+item))
                     )
 
     def _yieldroutes(self, func, name=None):
-        path = '/' + (name or func.__name__).replace('__', '/').lstrip('/')
+        path = '/' + (getattr(func, "__alias__", None) or name or func.__name__).replace('__', '/').lstrip('/')
         spec = getargspec(func)
-        argc = len(spec[0]) - len(spec[3] or [])
-        path += ('/<%s>' * (argc)) % tuple(spec[0][:argc])
+
+        argc = (len(spec[0]) - len(spec[3] or []))
+        path += ('/<%s>' * (argc - 1)) % tuple(spec[0][:argc - 1])
         yield path
-        for arg in spec[0][argc:]:
+        for arg in spec[0][argc + 1:]:
             path += '/<%s>' % arg
             yield path
-
-
-# class Wrap:
-#     def __init__(self, f, m):
-#         self.f = f
-#         self.m = m
-    
-#     def __call__(self, *args, **kwargs):
-#         return self.f(*self.m, *args, **kwargs)
-
-# def requests(*a):
-#     def wraps(view):
-#         return Wrap(view, a)
-#     return wraps
-
 
 # @singledispatch
 def render(source, *args, engine=adapter, **kwargs):
@@ -131,7 +121,7 @@ def render(source, *args, engine=adapter, **kwargs):
     context = Context(**GLOBALS, **config.get("static.template.globals", {}, raw=True), **context)
 
     templat = partial(template, template_adapter=engine)
-    template_setings=config.get("static.template.config")
+    template_setings=config.get("static.template.config", {})
 
     hooks.trigger(
         "before_render",
@@ -142,7 +132,6 @@ def render(source, *args, engine=adapter, **kwargs):
             "engine": templat
         })
     )
-
     return templat(source, context.as_dict(), *args, template_setings=template_setings, **kwargs)
 
 # @render.register(types.FunctionType)

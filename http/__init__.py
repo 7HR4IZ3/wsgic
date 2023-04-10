@@ -3,12 +3,15 @@ from html import escape
 from xml.dom.minidom import parseString
 from wsgic.thirdparty.bottle import DictProperty, LocalRequest, BaseRequest, LocalResponse, BaseResponse, request as req, response as res, SimpleCookie, urljoin, HTTPError as httperror, HTTPResponse, static_file as FileResponse, HTTP_CODES, FormsDict
 from wsgic.thirdparty.dicttoxml import dicttoxml
-from wsgic.routing import route
 from wsgic.helpers import hooks, messages, errors
 
 def get_session():
     from wsgic.session import sessions
     return sessions
+
+def route(*a, **kw):
+    from wsgic.routing import route as _route
+    return _route(*a, **kw)
 
 class Methods:
     GET = "GET"
@@ -65,7 +68,15 @@ class Request(LocalRequest):
     @property
     def mountpoint(self):
         return self.app.mountpoint
-    
+
+    @DictProperty('environ', 'wsgi.websocket', read_only=True)
+    def websocket(self):
+        raise RuntimeError('This request is not a websocket request.')
+
+    @property
+    def is_websocket(self):
+        return 'wsgi.websocket' in self.environ
+
     @property
     def is_popup(self):
         return self.GET.get("popup") == "true"
@@ -73,7 +84,7 @@ class Request(LocalRequest):
     @property
     def methods(self):
         return methods
-    
+
     @property
     def next(self):
         return self.GET.get('next', None)
@@ -178,8 +189,8 @@ class redirect(LocalResponse):
 class JsonResponse(Response):
     default_content_type = "application/json"
 
-    def __init__(self, body='', status=None, headers=None, **more_headers):
-        body = json.dumps(body, indent=4)
+    def __init__(self, body=None, status=None, headers=None, **more_headers):
+        body = json.dumps(body or {}, indent=4)
         super().__init__(body, status, headers, **more_headers)
         self.set_header("Content-Type", "application/json")
     
@@ -207,7 +218,7 @@ class HTTPError(httperror):
     def message(self, *a):
         messages.add(*a)
         return self
-    
+
     def error(self, *a):
         errors.add(*a)
         return self

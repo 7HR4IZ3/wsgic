@@ -1,7 +1,6 @@
-from ..scripts import BaseScripts, __all_scripts
+from ..scripts import __all_scripts
 from ..scripts.exceptions import ScriptNotFound
-from ..thirdparty.bottle import run, load
-from ..helpers.extra import set_global, get_global, load_module
+from ..helpers.extra import load_module
 from ..helpers import config
 
 class Apprunner:
@@ -14,15 +13,14 @@ class Apprunner:
     def __init__(self, app):
         try:
             def_app = app
-            app = load(app.rstrip(".app")+".app")
+            app = load_module(app.rstrip(".app")+".app")
         except ModuleNotFoundError:
             try:
-                app = load(app.replace(".app", ""))
+                app = load_module(app.replace(".app", ""))
             except ModuleNotFoundError:
                 raise ModuleNotFoundError(f"Module: {def_app} not found!.")
 
-        self.app = app.__app__
-        set_global("app", self.app)
+        self.app = getattr(app, "__app__", None) or getattr(app, "application")
 
         self.servers = {
             "wsgi": {
@@ -39,46 +37,21 @@ class Apprunner:
                     )
             }
         }
-    
-    def init_app(self):
-        self.app.setup()
-
-#     def get_middlewares(self, app=None):
-#         if not app:app=self.app
-#         middlewares = app.get("middlewares", e=None)
-#         if middlewares:
-#             App.push(app)
-#             mapp = App()
-#             entries = ["wsgic"]
-#             for a in get_global("installed_apps"):
-#                 entries.append(a.lower().replace("app", ""))
-#             for middleware in middlewares:
-#                 for apps in entries:
-#                     try:
-#                         middlewareclass = load(f"{apps}.middleware:{middleware}")
-#                         break
-#                     except:pass
-#                 _args = app.get(f"{middleware}['args']", e=(), raw=True)
-#                 _kwargs = app.get(f"{middleware}['kwargs']", e={}, raw=True)
-#                 mapp = middlewareclass(mapp, *_args, **_kwargs)
-#         else:mapp = self.app
-#         return mapp
 
     def run(self, server='werkzeug', host='127.0.0.1', port=8080, interval=1, type="wsgi", reloader=True, quiet=False, plugins=None, debug=False, config=None, **kargs):
         app = self.app.wrapped_app(type)
         apptype = self.servers.get(type)
-        bottle_server = "wsgiref"
+        bottle_server = "geventws"
 
-        if type == "asgi" and server == "werzkeug":
+        if type == "asgi" and server == "werkzeug":
             server = "uvicorn"
-
-        func = apptype.get(server)
 
         if server.startswith("bottle"):
             servers = server.split(".")
             if len(servers) > 1:
                 server, bottle_server = servers[0], servers[1]
 
+        func = apptype.get(server)
         if not func:
             if type == "wsgi":
                 func = self.servers[type]["werkzeug"]
@@ -91,51 +64,14 @@ class Apprunner:
 
             func(app, host=host, port=port, interval=interval, reloader=reloader, quiet=quiet, plugins=plugins, debug=debug, config=None, **kargs)
 
-        # if type == "wsgi":
-        #     from werkzeug import run_simple
-        #     run_simple(
-        #         host, port, app, reloader, debug, reloader_interval=interval
-        #     )
-        #     # from bottle import run
-        #     # if server == "gevent":
-        #     #     from gevent import monkey;monkey.patch_all()
-        #     # run(app, server=server, host=host, port=port, interval=interval, reloader=reloader, debug=debug, qquiet=quiet)
-        # elif type == "asgi":
-        #     from uvicorn.main import run
-        #     run(
-        #         app, host=host, port=port, debug=debug
-        #     )
         return
-#         if server == "gevent":
-#             from gevent import monkey
-#             monkey.patch_all()
-#         # run(app=self.get_middlewares(), **kw)
-#         return run(self.app, server=server, host=host, port=port, debug=debug, interval=interval, reloader=reloader, quiet=quiet, plugins=plugins, config=config, **kargs)
-
-# def url(func=None, method=None, name=None, apply=None, skip=None):
-#     return (func, method, name, apply, skip)
-
-
-# def runscript(app, *args):
-#     targetapp = load(app.replace(".app", "")+".scripts")
-#     appglobals = {x: getattr(targetapp, x) for x in dir(targetapp)}
-#     func = appglobals.get(args[0])
-#     if func:
-#         return func(*args[1:])
-#     else:
-#         for item in appglobals.values():
-#             if callable(item) and hasattr(item, args[0]):
-#                 item = item()
-#                 func = getattr(item, args[0], None)
-#                 if func:
-#                     return func(*args[1:])
-#     raise AttributeError
 
 def runscript(app, *args):
     try:
-        load(app.replace(".app", "")+".scripts")
+        load_module(app.replace(".app", "")+".scripts")
     except:
-        load(app)
+        load_module(app)
+
     scripts = __all_scripts
     func = scripts.get(args[0])
     if func:

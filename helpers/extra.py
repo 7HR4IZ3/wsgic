@@ -27,7 +27,7 @@ def set_global(name, value, override=True):
 
 def get_global(name, e=None):return ext.get(name, e)
 
-def load_module(target, e=None, catch_errors=True, **namespace):
+def load_module(target, e=None, catch_errors=False, return_error=False, **namespace):
 	try:
 		module, target = target.split(":", 1) if ':' in target else (target, None)
 		if module not in sys.modules: __import__(module)
@@ -38,6 +38,8 @@ def load_module(target, e=None, catch_errors=True, **namespace):
 		return eval('%s.%s' % (module, target), namespace)
 	except Exception as err:
 		if catch_errors:
+			if return_error:
+				return err
 			return e
 		raise err
 
@@ -78,7 +80,7 @@ class switch:
 	def case(self, case, call, args=None, kwargs=None):
 		kwargs = kwargs or {}
 		args = args or []
-		self.cases[f"{case}"] = {
+		self.cases[case] = {
 			"func": call,
 			"args": self.args+args,
 			"kwargs": dict(**self.kwargs, **kwargs)

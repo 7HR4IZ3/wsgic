@@ -66,7 +66,6 @@ class App:
             app = main(app, *_get(middleware, 2, []), **_get(middleware, 3, {}))
         return app
 
-
     def wrapped_app(self, type="wsgi"):
         if type == "wsgi":
             return self.wrapped_wsgi

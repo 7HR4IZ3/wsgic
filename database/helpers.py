@@ -38,7 +38,7 @@ def sql_to_form(type):
     return type
 
 class BaseObjects:
-    
+
     def bind(self, model, db):
         self.model = model
         # self.table_name = table_name

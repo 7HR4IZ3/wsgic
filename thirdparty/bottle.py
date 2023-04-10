@@ -2040,6 +2040,23 @@ class JSONPlugin(object):
 
         return wrapper
 
+class WebsocketPlugin:
+    name = "websocket"
+    api = 2
+
+    def apply(self, callback, route):
+        args = getargspec(callback)[0]
+        if "websocket" in args:
+            key = "websocket"
+        elif "ws" in args:
+            key = "ws"
+        else:
+            return callback
+
+        def wrapper(*args, **kwargs):
+            kwargs[key] = request.environ.get('wsgi.websocket')
+            callback(*args, **kwargs)
+        return wrapper        
 
 class TemplatePlugin(object):
     """ This plugin applies the :func:`view` decorator to all routes with a
@@ -3576,6 +3593,54 @@ class AutoServer(ServerAdapter):
             except ImportError:
                 pass
 
+# class GeventWebSocketServer(ServerAdapter):
+#     def run(self, handler):
+#         import logging
+#         from gevent import pywsgi
+#         from geventwebsocket.handler import WebSocketHandler
+#         from geventwebsocket.logging import create_logger
+
+#         server = pywsgi.WSGIServer((self.host, self.port), handler, handler_class=WebSocketHandler)
+
+#         if not self.quiet:
+#             server.logger = create_logger('geventwebsocket.logging')
+#             server.logger.setLevel(logging.INFO)
+#             server.logger.addHandler(logging.StreamHandler())
+#         if 'BOTTLE_CHILD' in os.environ:
+#             import signal
+#             signal.signal(signal.SIGINT, lambda s, f: server.stop())
+#         server.serve_forever()
+
+
+class GeventWebSocketServer(ServerAdapter):
+    """ Untested. Options:
+
+        * See gevent.wsgi.WSGIServer() documentation for more options.
+    """
+
+    def run(self, handler):
+        import logging
+        from gevent import pywsgi, local
+        from geventwebsocket.handler import WebSocketHandler
+        from geventwebsocket.logging import create_logger
+
+        from gevent.monkey import patch_all; patch_all()
+
+        if not isinstance(threading.local(), local.local):
+            msg = "Bottle requires gevent.monkey.patch_all() (before import)"
+            raise RuntimeError(msg)
+        if self.quiet:
+            self.options['log'] = None
+        address = (self.host, self.port)
+        server = pywsgi.WSGIServer(address, handler, handler_class=WebSocketHandler, **self.options)
+        if 'BOTTLE_CHILD' in os.environ:
+            import signal
+            signal.signal(signal.SIGINT, lambda s, f: server.stop())
+        if not self.quiet:
+            server.logger = create_logger('geventwebsocket.logging')
+            server.logger.setLevel(logging.INFO)
+            server.logger.addHandler(logging.StreamHandler())
+        server.serve_forever()
 
 server_names = {
     'cgi': CGIServer,
@@ -3592,6 +3657,7 @@ server_names = {
     'diesel': DieselServer,
     'meinheld': MeinheldServer,
     'gunicorn': GunicornServer,
+    'geventws': GeventWebSocketServer,
     'eventlet': EventletServer,
     'gevent': GeventServer,
     'bjoern': BjoernServer,

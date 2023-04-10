@@ -58,7 +58,10 @@ class SqliteDatabase(Hooks):
     def connect(self):
         try:
             self._debug('[+] Connecting To Database %s' %self.path)
+
+            self.kw["check_same_thread"] = False
             self.connection = sqlite3.connect(self.path, **self.kw)
+
             self.connection.row_factory = sqlite3.Row
             self.cursor = self.connection.cursor()
             self.trigger("connect")

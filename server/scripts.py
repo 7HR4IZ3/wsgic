@@ -1,17 +1,20 @@
 import os, sys
-from wsgic.helpers.extra import get_global as _gg, set_global as _sg
+from wsgic.helpers.extra import get_global as __getglobal, set_global as __set_global__
 from wsgic.scripts import BaseScripts, script, __all_scripts
 from wsgic.scripts.exceptions import ScriptNotFound
-from .helpers import runscript, Apprunner as _ar
+from .helpers import runscript, Apprunner as __app_runner__
 
 _root = os.getcwd()
-sys.path.append(
-    os.path.join(_root, "apps")
-)
-_sg("APPSDIR", _root+'/apps')
-_sg("ROOTDIR", _root)
+# sys.path.append(
+#     os.path.join(_root, "apps")
+# )
+# sys.path.append(
+#     "C:\\Users\\HP\\Desktop\\files\\programming\\projects"
+# )
+__set_global__("APPSDIR", _root+'/apps')
+__set_global__("ROOTDIR", _root)
 
-@script("create")
+@script("create", "-c")
 def create(target, *a, **kw):
     if target == "app":
         return start_app(*a, **kw)
@@ -22,7 +25,7 @@ def create(target, *a, **kw):
 @script("create-app")
 def start_app(name, type="full"):
     files_full = {
-        "__init__": f"""from .app import __app__ as {name.title()}
+        "__init__": f"""from .app import application as {name.title()}
 from . import scripts
 from . import services
 """,
@@ -33,7 +36,7 @@ class {name.title()}App(WSGIApp):
     def __init__(self):
         super().__init__("{name}.urls:router", config)
 
-__app__ = {name.title()}App()
+application = {name.title()}App()
 """,
         "views" : """from wsgic.http import request
 
@@ -63,11 +66,11 @@ from .models import *
 
 register()
 """,
-        "wsgi": f"""from .app import __app__ as {name.title()}App
+        "wsgi": f"""from .app import application as {name.title()}App
 
 application = {name.title()}App.wrapped_app("wsgi")
 """,
-        "asgi": f"""from .app import __app__ as {name.title()}App
+        "asgi": f"""from .app import application as {name.title()}App
 
 application = {name.title()}App.wrapped_app("asgi")
 """
@@ -83,22 +86,20 @@ router, routes = Router().get_routes()
 def index():
     return f"Hello World from {request.path}"
 
-__app__ = WSGIApp(router)
-application = __app__.wrapped_app("wsgi")
+app = WSGIApp(router)
+application = app.wrapped_app("wsgi")
 """
     }
     files_basic = {
         "__init__": """from wsgic import WSGIApp
-from wsgic.http import request
 
 app = WSGIApp()
 
-@app.get("*")
+@app.get("/")
 def index():
-    return f"Hello World from {request.path}"
+    return f"Hello World"
 
-__app__ = app
-application = __app__.wrapped_app("wsgi")
+application = app.wrapped_app("wsgi")
 """
     }
     files_basic_django = {
@@ -108,12 +109,11 @@ from wsgic.http.plugins import RequestPlugin
 app = WSGIApp()
 app.routes.install(RequestPlugin)
 
-@app.get("*")
+@app.get("/")
 def index(request):
     return f"Hello World from {request.path}"
 
-__app__ = app
-application = __app__.wrapped_app("wsgi")
+application = app.wrapped_app("wsgi")
 """
     }
     if type in ("full", "-f"):
@@ -129,8 +129,8 @@ application = __app__.wrapped_app("wsgi")
 
     cwd = str(os.getcwd())
     if not cwd.endswith('apps'):
-        print('Not currently in apps directory')
-        y = input('Create in apps directory? [y, n, q]: ')
+        # print('Not currently in apps directory')
+        y = 'n' #input('Create in apps directory? [y, n, q]: ')
         if y.lower() == 'y':
             nm = name
             name = os.path.join('apps', name)
@@ -159,14 +159,26 @@ application = __app__.wrapped_app("wsgi")
     print()
     print(f"Creating WSGI App: {nm}")
     print()
-    for m in files:
+    
+    if len(files) == 1:
+        fp = os.path.join(name, '__init__')
         try:
-            print(f"Generating File: {os.path.join(name, m)}.py")
-            with open(f"{os.path.join(name, m)}.py", "x") as file:
-                file.write(files[m])
+            print(f"Generating File: {fp}.py")
+            with open(f"{fp}.py", "x") as file:
+                file.write(files['__init__'])
         except FileExistsError:
-            print("File {os.path.join(name, m)}.py Already Exists")
-            pass
+            print(f"File {fp}.py Already Exists")
+
+    else:
+        for m in files:
+            fp = os.path.join(name, m)
+            try:
+                print(f"Generating File: {fp}.py")
+                with open(f"{fp}.py", "x") as file:
+                    file.write(files[m])
+            except FileExistsError:
+                print(f"File {fp}.py Already Exists")
+
     print()
     print(f"Created WSGI App: {nm}")
 
@@ -180,37 +192,36 @@ class Runner:
         from argparse import ArgumentParser
 
         parser = ArgumentParser(prog="wsgic", usage="python -m %(prog)s [options] package.module:app")
-        opt = parser.add_argument
-        # opt("--version", action="store_true", help="show version number.")
-        opt("-b", "--bind", metavar="ADDRESS", help="bind socket to ADDRESS.")
-        opt("-s", "--server",default="werkzeug", help="use SERVER as backend.")
-        # opt("-p", "--plugin", action="append", help="install additional plugin/s.")
-        #  opt("-c", "--conf", action="append", metavar="FILE", help="load config values from FILE.")
-        opt("-C", "--param", action="append", metavar="NAME=VALUE", help="override config values.")
-        # opt("-p", "--port", action="store_true", help="create new wsgi app.")
-        # opt("-s", "--script", action="store_true", help="run script then app.")
-        opt("-a", "--asgi", action="store_true", help="run the asgi version of an app.")
-        # opt("-r", "--asgi", action="store_true", help="run the asgi version of an app.")
-        # opt("-d", "--django", action="store_true", help="Run the django cli.")
-        opt("-env", default="dev", help="set app environment")
-        opt("--debug", action="store_true", help="start server in debug mode.")
-        opt("--ipyshell", action="store_true", help="start an interactive shell powered by ipython.")
-        opt("--no-reload", action="store_true", help="auto-reload on file changes.")
+        arg = parser.add_argument
+
+        # arg("--version", action="store_true", help="show version number.")
+        arg("-b", "--bind", metavar="ADDRESS", help="bind socket to ADDRESS.")
+        arg("-s", "--server", default="werkzeug", help="use SERVER as backend.")
+        # arg("-p", "--plugin", action="append", help="install additional plugin/s.")
+        #  arg("-c", "--conf", action="append", metavar="FILE", help="load config values from FILE.")
+        arg("-C", "--param", action="append", metavar="NAME=VALUE", help="override config values.")
+        # arg("-p", "--port", action="store_true", help="create new wsgi app.")
+        # arg("-s", "--script", action="store_true", help="run script then app.")
+        arg("-a", "--asgi", action="store_true", help="run the asgi version of an app.")
+        # arg("-d", "--django", action="store_true", help="Run the django cli.")
+        arg("-env", default="dev", help="set app environment")
+        arg("--debug", action="store_true", help="start server in debug mode.")
+        arg("--ipyshell", action="store_true", help="start an interactive shell powered by ipython.")
+        arg("--no-reload", action="store_true", help="auto-reload on file changes.")
         return parser
 
     def __init__(self, app=os.environ.get("WSGIC_APP"), *args):
         args = self.__get_run_parser().parse_args(args)
         if not app:
-            raise ValueError("Appname not specified.")
-        appname = app
-        _sg("APPDIR", _root+'/apps/'+app)
-        _sg("APPMODULE", app)
-        _sg("installed_apps", {})
-        runner = _ar(app)
+            raise ValueError("App was not specified.")
+
+        # __set_global__("APPDIR", _root+'/apps/'+app)
+        # __set_global__("APPMODULE", app)
+        # __set_global__("installed_apps", {})
+        runner = __app_runner__(app)
 
         kwargs = {}
-        _sg("app_runner", runner)
-        runner.init_app()
+        # __set_global__("app_runner", runner)
 
         if args.bind:
             host = args.bind

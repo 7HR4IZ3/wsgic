@@ -190,6 +190,12 @@ class DatabaseSessionStore(BaseSessionStore):
         self.sessions = Session
 
     def get(self, sid):
+        # n = randint(0, 100)
+        # print("Session cleanup:", n)
+        # if n <= 20:
+        #     # Thread(target=self.cleanup).start()
+        #     (self.cleanup)()
+
         if self.is_valid_key(sid):
             data = self.sessions.objects.get(key=sid)
             if data:
@@ -200,18 +206,16 @@ class DatabaseSessionStore(BaseSessionStore):
                 return self.session_class(data, sid, False, store=self)
             else:
                 return self.session_class({}, sid, False, store=self)
-        
-        n = randint(0, 100)
-        if n <= 20:
-            Thread(target=self.cleanup).start()
 
         return self.new()
     
     def cleanup(self):
         ips = []
-        for item in self.sessions.objects.get()[::-1]:
-            if (not config.get("debug", False) and item.ipaddress in ips) or item.expires.timestamp() <= datetime.now().timestamp():
-                self.sessions.delete(key=item.key)
+        for item in self.sessions.objects.all():
+            if (not item.ipaddress in ips) and item.expires.timestamp() <= datetime.now().timestamp():
+                self.sessions.objects.delete(key=item.key)
+            else:
+                continue
             ips.append(item.ipaddress)
 
     def list(self):

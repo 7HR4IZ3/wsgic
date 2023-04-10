@@ -63,6 +63,9 @@ class BaseStorage:
     def _main(self, *a, **kw):
         return self
 
+    def __str__(self):
+        return f'{self.__class__.__name__}(directory={self.config["directory"]})'
+
     def get(self, filename, **kw):raise NotImplementedError
     def save(self, filename, data, **kw):raise NotImplementedError
     def exists(self, *a, **kw):raise NotImplementedError
@@ -100,6 +103,7 @@ class BaseStorage:
                 mimetype, encoding = mimetypes.guess_type(download)
             else:
                 mimetype, encoding = mimetypes.guess_type(filename)
+
             if encoding:
                 headers['Content-Encoding'] = encoding
     
@@ -200,6 +204,9 @@ class Folder:
         if self.exists(name) and self.is_file(name):
             return self.get(name)
         return Folder(directory=self.store.join(self.config["directory"], name), store=self, name=name)
+    
+    def __str__(self):
+        return f'Folder(directory={self.config["directory"]})'
     
     def parent(self):
         if self.store:

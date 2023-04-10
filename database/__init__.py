@@ -6,6 +6,7 @@ else:
     from wsgic.helpers import config
     from .sqlite import *
     from wsgic.helpers.extra import load_module
+from .base import BaseDatabase
 # from .sqlalchemy import SqlalchemyDatabase
 
 # class Database:
@@ -107,9 +108,9 @@ else:
 
 database = None
 databases = {
-    "base": load_module("wsgic.database.base:BaseDatabase"),
+    "base": BaseDatabase,
     "sqlite": load_module("wsgic.database.sqlite.sqlite:SqliteDatabase"),
-    "mysql": load_module("wsgic.database.mysql:MysqlDatabase"),
+    "mysql": load_module("wsgic.database.mysql:MysqlDatabase", catch_errors=True),
 }
 
 if config.get("use.database", True):
@@ -118,7 +119,7 @@ if config.get("use.database", True):
         uri, path = path.split("://")
 
         if uri in databases:
-            database = databases[uri](
+            database: BaseDatabase = databases[uri](
                 path, debug=config.get("debug", False),
                 verbose=config.get("verbose", False),
                 **config.get("config", {}, True)

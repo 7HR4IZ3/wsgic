@@ -22,5 +22,4 @@ class MustacheTemplate(BaseTemplate):
 		return self.tpl(**_defaults)
 
 mustache_template = partial(template, template_adapter=MustacheTemplate)
-
 mustache_view = partial(view, template_adapter=MustacheTemplate)

@@ -5,7 +5,7 @@ from random import randint
 from contextlib import contextmanager
 from wsgic.thirdparty.bottle import ConfigDict, makelist, load
 
-from .extra import get_global
+from .extra import *
 
 _ = False
 db = hooks = ordered = config = None
@@ -82,9 +82,9 @@ class Config(ConfigDict):
 
     def use(self, module, begin=0, end=-1):
         self._source = None
-        if type(module) is dict:
+        if isinstance(module, (Config, dict)):
             self.load_dict(module)
-        elif type(module) is str:
+        elif isinstance(module, str):
             if begin != 0 and end != -1:
                 file = f"tmpconfig-{randint(0, 9)}.py"
                 with open(file, "w") as config:

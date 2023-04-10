@@ -1,12 +1,19 @@
-import types, inspect
-import uuid
+import types, inspect, os
+import queue
 import asyncio
 
 from functools import partial, wraps
-from string import ascii_letters
-from wsgic.thirdparty.bottle import load, Route as Route_, Router as Router_, makelist, py3k, redirect, getargspec
-from wsgic.helpers.extra import get_global
-from wsgic.helpers import config, ordered, hooks
+from threading import Thread
+
+from wsgic.thirdparty.bottle import Route as Route_, Router as Router_, makelist, py3k, redirect, getargspec, static_file
+from wsgic.helpers import config, ordered, hooks, get_global, load_module
+from wsgic.http import BaseResponse, request, abort
+
+# try:
+#     from py_bridge import JSBridgeServer
+# except ImportError as e:
+JSBridgeServer = None
+    # raise e
 
 from contextlib import contextmanager
 
@@ -28,11 +35,18 @@ def _url(x, ignore=None):
     if x == "":x = "/"
     return x
 
+def task(func, handler=Thread, *ta, **tkw):
+    @wraps(func)
+    def wrapper(*a, **kw):
+        thread = handler(*ta, target=func, args=a, kwargs=kw, **tkw)
+        thread.start()
+        return thread
+    return wrapper
+
 def wrap(callback):
     def main(*a, **kw):
         return asyncio.run(callback(*a, **kw))
     return main
-
 
 def yieldroutes(func):
     """ Return a generator for routes that match the signature (name, args)
@@ -54,7 +68,6 @@ def yieldroutes(func):
         yield path
 
 def compile_route(_route, **data):
-
     def main(seg):
         for x in list(data.keys()):
             if x in seg:
@@ -137,16 +150,17 @@ class Route(Route_):
     
     def __repr__(self):
         cb = self.callback
-        return '<%s %s -> %s:%s>' % (self.method, self.rule, cb.__module__, cb.__name__)
+        return '<%s %s -> %s:%s [name=%s]>' % (self.method, self.rule, cb.__module__, cb.__name__, self.name)
 
 class Routes:
-    def __init__(self, start="<", end=">", seperator=":",  engine="complex", **kw):
-        self.data = []
+    def __init__(self, data=None, start="<", end=">", seperator=":",  engine="complex", **kw):
+        self.data = data if isinstance(data, list) else []
         self.plugins = []
         self.mounts = {}
         self.filters = {}
         self.errors = {}
         self.placeholder_ = kw.pop("placeholder", None) or "arg"
+
 
         self.start, self.end, self.sep, self.engine = start, end, seperator, engine
         self.config = {
@@ -154,6 +168,38 @@ class Routes:
             "app": None,
             "prefix": ""
         }
+
+        if JSBridgeServer and not ('BOTTLE_CHILD' in os.environ):
+            self.__web = JSBridgeServer(setup=False)
+
+            self.__injected = """
+                <script src="/__js_bridge_web_js__"></script>
+                <script>
+                    let client = new JSBridge.JSBridgeClient({
+                        host: location.hostname,
+                        port: location.port,
+                        path: "/__js_bridge_web_ws__"
+                    });
+                    client.set_mode("python")
+                    client.start();
+                </script>
+            """
+
+            @self.get("/__js_bridge_web_js__")
+            def _(**a):
+                return static_file(
+                    "js_bridge_web.js",
+                    root="C:\\Users\\HP\\Desktop\\files\\programming\\projects\\node_modules\\js_bridge",
+                    mimetype='application/javascript'
+                )
+            
+            self.websocket(
+                "/__js_bridge_web_ws__",
+                callback=(lambda socket, *a, **k: self.__web.handle_connection(socket))
+            )
+
+        else:
+            self.__web = self.__injected = None
 
     def placeholder(self, name, regex, to_py=None, in_url=None):
         self.filters[name] = lambda conf: (regex, to_py, in_url)
@@ -192,7 +238,7 @@ class Routes:
         for segment in seg:
             if start in segment and end in segment:
                 segment = self._conv(segment, start, end, sep)
-            elif segment != "" and ("(" in segment or "[" in segment or segment.lstrip()[0] not in ascii_letters) and (not segment.startswith('<') and not segment.endswith('>')):
+            elif segment != "" and ("(" in segment or "[" in segment) and (not segment.startswith('<') and not segment.endswith('>')) or segment == '*':
                 if segment == "*":
                     segment = ".*"
                 segment = "<"+(placeholder+str(anons_count) if anons_count >= 1 else placeholder)+":re:"+segment+">"
@@ -225,36 +271,80 @@ class Routes:
         else:
             ordered[name] = makelist(rule)
     
+    def __responder(self, func):
+        def wrapper(*a, **kw):
+            q = queue.Queue()
+
+            def put(res):
+                if isinstance(res, BaseResponse):
+                    res.body = self.__injected + res.body
+                    q.put(res)
+                else:
+                    q.put(self.__injected + str(res))
+
+            def _():
+                func(put, self.__web.get_connection, *a, **kw)
+
+            task(_, daemon=True)()
+            return q.get()
+        return wrapper
+
+    def __websocket_responder(self, func):
+        def wrapper(*a, **kw):
+            q = queue.SimpleQueue()
+
+            if not request.is_websocket:
+                return abort(404, "Not found.")
+
+            websocket = request.websocket
+            def close():
+                if not websocket.closed:
+                    websocket.close()
+                q.put(None)
+
+            task(func, daemon=True)(
+                websocket, close, *a, **kw
+            )
+
+            q.get()
+            return ''
+        return wrapper
+    
     def route(self, name, e=None, i=0, **kw):
         return route(name, e=e, i=i, **kw)
 
     def add(self, path, callback=None, method=["GET", "POST", 'PUT', 'DELETE', "CLI"], name=None, apply=None, skip=None, **config):
         plugins = makelist(apply)
         skiplist = makelist(skip)
-        rule = makelist(path(callback, name) if callable(path) else path)
 
         def wrapper(callback):
             data = []
+
             if isinstance(callback, str):
                 if self.config['base_view'] and hasattr(self.config['base_view'], callback):
                     callback = getattr(self.config['base_view'], callback)
                     for dec in self.config['base_view'].decorators:
                         callback = dec(callback)
                 else:
-                    callback = load(callback)
+                    callback = load_module(callback)
 
             if inspect.iscoroutinefunction(callback):
                 callback = wrap(callback)
 
-            for path in rule:
+            rname = getattr(callback, "__route_name__", name)
+            rpath = getattr(callback, "__alias__", path)
+
+            rules = makelist(rpath(callback, rname) if callable(rpath) else rpath)
+
+            for rule in rules:
                 if self.config['prefix']:
-                    path = self.config['prefix'] + "/" + path
-                path = self._compile(_url(path))
-                if name:
-                #     print("add", name, path)
-                    ordered.add(name, path)
+                    rule = self.config['prefix'] + "/" + rule
+                rule = self._compile(_url(rule))
+                if rname:
+                #     print("add", rname, rule)
+                    ordered.add(rname, rule)
                 for verb in makelist(method):
-                    route = Route(path, verb, callback, name=name, plugins=plugins, skiplist=skiplist, **config)
+                    route = Route(rule, verb, callback, name=rname, plugins=plugins, skiplist=skiplist, **config)
                     data.append(route)
             self.data = self.data + data
             return data[0] if len(data) == 1 else data
@@ -284,6 +374,29 @@ class Routes:
 
     def cli(self, path, callback=None, name=None, **kwargs):
         return self.add(path, callback, name=name, method="CLI", **kwargs)
+
+    def websocket(self, path=None, callback=None, name=None, apply=None, skip=None, **config):
+        def decorator(callback):
+            if isinstance(callback, str):
+                callback = load_module(callback)
+            return self.get(
+                path=path,
+                callback=self.__websocket_responder(callback),
+                name=name, apply=apply, skip=skip, **config
+            )
+        return decorator(callback) if callback else decorator
+
+    def web_route(self, path=None, method='GET', callback=None, name=None, apply=None, skip=None, **config):
+        assert JSBridgeServer, "PyBridge is required to use 'web_route'."
+        def decorator(callback):
+            if isinstance(callback, str):
+                callback = load_module(callback)
+            return self.add(
+                path=path, method=method,
+                callback=self.__responder(callback),
+                name=name, apply=apply, skip=skip, **config
+            )
+        return decorator(callback) if callback else decorator
     
     def resource(self, path, callback=None, mapping=None, name=None, key="id", create=None, skip=None, methods=None, **kwargs):
 
@@ -339,7 +452,7 @@ class Routes:
     def error(self, code=404, callback=None):
         def decorator(callback):
             for c in makelist(code):
-                if isinstance(callback, str): callback = load(callback)
+                if isinstance(callback, str): callback = load_module(callback)
                 self.errors[int(c)] = callback
             return callback
 
@@ -394,33 +507,34 @@ class Routes:
                 self.data.append(route)
             self.mounts[url] = app_
     
-    def view(self, rule, view=None, name=None, apply=None, skip=None, **config):
+    def view(self, rule="", view=None, name=None, apply=None, skip=None, **config):
         def main(view, wrapped=False):
-            if wrapped or (not hasattr(view, "_")):
+            if wrapped or (not hasattr(view, "_routes")):
                 view = view()
             if hasattr(view, "setup_routes"):
-                routes = view.setup_routes(self)
-            routes = view._
+                routes = view.setup_routes(self, {"name": name, "rule": rule, "apply": apply, "skip": skip, "config": config})
+            else:
+                routes = view._routes
+                
+                plugins = makelist(apply)
+                skiplist = makelist(skip) 
             
-            plugins = makelist(apply)
-            skiplist = makelist(skip)
-        
-            for route in routes:
-                if self.config["prefix"]:
-                    route.rule = _url(self.config['prefix'] + "/" + rule + "/" + route.rule)
-                else:
-                    route.rule = _url(rule + "/" + route.rule)
-                if name:
-                    route.name = name + route.name
-                    ordered.add(route.name, route.rule)
-                route.plugins = plugins
-                route.skiplist = skiplist
-                route.config = config
+                for route in routes:
+                    if self.config["prefix"]:
+                        route.rule = _url(self.config['prefix'] + "/" + rule + "/" + route.rule)
+                    else:
+                        route.rule = _url(rule + "/" + route.rule)
+                    if name:
+                        route.name = name + route.name
+                        ordered.add(route.name, route.rule)
+                    route.plugins = plugins
+                    route.skiplist = skiplist
+                    route.config = config
 
-                for dec in getattr(view, 'decorators', []):
-                    route.callback = dec(route.callback)
-                    
-                self.data.append(route)
+                    for dec in getattr(view, 'decorators', []):
+                        route.callback = dec(route.callback)
+                        
+                    self.data.append(route)
         return main(view) if view else partial(main, wrapped=True)
     
     def expose(self, callback=None, method=["GET", "POST", 'PUT', 'DELETE', "CLI"], name=None, apply=None, skip=None, **config):
@@ -482,6 +596,8 @@ class Routes:
         hooks.trigger('app_reset')
 
 class Router(Router_):
+    routes: Routes
+
     def __init__(self, routes=None, strict=False):
         self.routes = routes or Routes()
         super().__init__(strict=strict)
@@ -490,7 +606,7 @@ class Router(Router_):
         # self.filters['uuid'] = lambda conf: (r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", uuid.UUID, lambda x: str(x))
     
     def get_routes(self):
-        return self, self.routes
+        return [self, self.routes]
     
     def set_routes(self, routes):
         self.routes = routes
@@ -540,3 +656,47 @@ class Router(Router_):
             route.rule = _url(path + "/" + route.rule)
             self.routes.data.append(route)
 
+
+class AutoRouter(Router):
+    def __init__(self, allowed_modules="*", strict=False):
+        super().__init__(
+            routes=Routes(engine="simple"),
+            strict=strict
+        )
+        self.allowed_modules = allowed_modules
+        self.routes.add("<path:path>", callback=self.handle_callback)
+
+    def handle_callback(self, path):
+        """
+            /users -> module: 'users', function: 'index'
+            /users/posts -> module: 'users', function: 'posts'
+            /users/posts/12 -> module: 'users', function: 'posts', args: '12'
+        """
+
+        segments = path.split("/")
+        module = _get(segments, 0)
+        if module:
+            if self.allowed_modules and self.allowed_modules != "*":
+                if not module in self.allowed_modules:
+                    return abort(404, "Page Not Found.")
+ 
+            function = _get(segments, 1, 'index')
+            func = load_module(f"{module}.views:{function}", catch_errors=True)
+
+            if not func:
+                func = load_module(f"{module}:{function}", catch_errors=True)
+
+            if func:
+                spec = getargspec(func)
+                has_starargs = not (spec[1] is None)
+                # print(spec, segments[2:], len(spec[0]), has_starargs)
+                if has_starargs:
+                    args = segments[2:]
+                else:
+                    args = segments[2: len(spec[0]) + 2]
+                
+                try:
+                    return func(*args)
+                except Exception as e:
+                    return abort(500, repr(e)) 
+        return abort(404, "Page Not Found.")

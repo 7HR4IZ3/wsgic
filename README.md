@@ -43,7 +43,7 @@ def index():
     return "Hello, world!"
 
 app = WSGIApp(router=router)
-application = app.wrapped_app("wsgi" # 'asgi' also supported)
+application = app.wrapped_app("wsgi") # 'asgi' also supported
 # or just call app.run()
 ```
 
@@ -57,7 +57,7 @@ app = WSGIApp()
 def index():
     return "Hello, world!"
 
-application = app.wrapped_app("wsgi" # 'asgi' also supported)
+application = app.wrapped_app("wsgi") # 'asgi' also supported
 # or just call app.run()
 ```
 

@@ -155,27 +155,30 @@ app.run()
 
 ## Demo
 ```python
+from wsgic import WSGIApp
 from wsgic.views import FunctionView, view
 from wsgic.http import request, redirect
 from wsgic.services import service
 from wsgic_auth.core.session import SessionAuth
 from wsgic.routing.helpers import alias, named_route
 
+app = WSGIApp()
+
 authentication: SessionAuth = service("authentication")
 validation = service("validation")
 
-
-
+@app.view("/")
 class HomeView(FunctionView):
     # FunctionView creates routes from all class methods with style '{method}_{path}'
     # Methods starting with '_' are ignored
     # Default method is get so 'profile' is interpreted as 'get_profile'
 
-    @named_route("homepage")
-    @view("index-2.html")
+    @named_route("homepage") # Register name for the route
+    @view("index.html") # Bind view to the route, interpreted as render("index.html", context=get_index())
     def get_index(self):
-        return { "games": Game.objects.all() }
+        return { "name": "World" }
 
+@app.view("/auth")
 class AuthView(FunctionView):
 
     @view("login.html")
@@ -185,7 +188,6 @@ class AuthView(FunctionView):
         return
 
     def post_login(self):
-        print(authentication.is_logged_in())
         if authentication.is_logged_in(): return redirect("/")
 
         username = request.POST.get("username")

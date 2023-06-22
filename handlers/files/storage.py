@@ -3,6 +3,7 @@ import hashlib
 from functools import singledispatch
 
 import io
+from pathlib import Path
 
 from wsgic.thirdparty.bottle import (
     mimetypes, HTTPResponse, HTTPError, email, time, tob,
@@ -50,13 +51,17 @@ class File(FileUpload):
             return getattr(self.file, name)
 
 class BaseStorage:
-    config = {}
     plugins = None
     
-    def __init__(self, **config):
+    def __init__(self, directory, **config):
         self.config = config
         self.plugins = []
-        self.config["name"] = self.config.get("name", self.config.get("directory", "").lstrip("./").replace("//", "/").split("/")[-1])
+
+        directory = Path(directory)
+        self.config["path"] = directory
+
+        self.config['directory'] = directory.as_posix()
+        self.config["name"] = directory.name
         # if not self.exists(self.config['directory']):
         #     self.create_directory("")
     
@@ -78,8 +83,8 @@ class BaseStorage:
     def has_access(self, filename, **kw):raise NotImplementedError
 
     def handler(self, path, directory=None,  mimetype=True, download=False, charset='UTF-8', etag=None, headers=None, cache=True):
+
         directory = directory or self.config["directory"]
-        
         filepath = self.join(directory, path)
         splits = os.path.split(filepath)
 

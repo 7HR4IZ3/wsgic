@@ -142,6 +142,11 @@ class Config(ConfigDict):
         if not self._source:self._source = source
         return super().load_dict(source, namespace)
     
+    def copy(self):
+        ret = Config()
+        ret.load_dict(self)
+        return ret
+    
     def __getattr__(self, name):
         name = str(self.prf.upper() + name)
         if name in self._source:
@@ -272,24 +277,20 @@ class Hooks:
     def attach(self, event, func=None, override=False):
         def wrapper(func):
             funcs = makelist(func or [])
-            if event not in self._:
+            if (event not in self._) or override is True:
                 self._[event] = funcs
             else:
-                if override:
-                    self._[event] = funcs
-                else:
-                    self._[event] += funcs
+                self._[event] = [*self._[event], *funcs]
             return func
         return wrapper(func) if func else wrapper
     
-    def trigger(self, event, apply=None, *args, **kwargs):
+    def trigger(self, event, *args, **kwargs):
         if event in self._:
             for func in self._[event]:
                 if callable(func):
-                    if apply:
-                        apply(func)(*args, **kwargs)
-                    else:
-                        func(*args, **kwargs)
+                    apply = kwargs.pop("apply", None)
+                    if apply: apply(func)(*args, **kwargs)
+                    else: func(*args, **kwargs)
         return True
     
     def remove(self, event):
@@ -326,50 +327,32 @@ class NamedRoutes:
     __data = {}
 
     @property
-    def __app(self):
-        app = get_global("APPMODULE")
-        if not isinstance(app, str):
-            app = str(app.__class__.__name__)
-        app = app.lower().replace("app", '')
-        return app
-
-    @property
     def data(self):
         return self.__data
     
     def __contains__(self, name):
-        return name in self.data[self.__app]
+        return name in self.data
 
-    def add(self, name, route, app=None):
-        app = app or self.__app
-        if app not in self.__data:
-            self.__data[app] = {}
-        if name not in self.__data[app]:
-            self.__data[app][name] = []
-        self.__data[app][name].append(route)
+    def add(self, name, route):
+        if name not in self.__data:
+            self.__data[name] = []
+        self.__data[name].append(route)
     
     __setitem__ = add
     
-    def get(self, name, app=None, index=0, e=None):
-        app = app or self.__app
-        if app in self.__data:
-            if name in self.__data[app]:
-                return self.__data[app][name][index]
+    def get(self, name, index=0, e=None):
+        if name in self.__data:
+            return self.__data[name][index]
         return e or name
     
     __getitem__ = get
     
-    def remove(self, name, app=None):
-        app = app or self.__app
-        if app in self.__data:
-            if name in self.__data[app]:
-                return self.__data[app].pop(name)
+    def remove(self, name):
+        return self.__data.pop(name, None)
 
-    def pop(self, name, app=None, index=0):
-        app = app or self.__app
-        if app in self.__data:
-            if name in self.__data[app]:
-                return self.__data[app][name].pop(index)
+    def pop(self, name, index=0):
+        if name in self.__data:
+            return self.__data[name].pop(index)
 
     def reverse(self, name,e=None, **kwargs):
         names = name.split(':')
@@ -433,6 +416,16 @@ def setup():
     messages =  Messages()
     errors =  Messages()
 
+def set_config(new_config: Config):
+    global config
+    config = new_config
+
 if not _:
     setup()
     _ = True
+
+config: Config
+ordered: NamedRoutes
+db: DatabaseStack
+messages: Messages
+errors: Messages

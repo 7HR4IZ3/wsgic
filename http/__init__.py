@@ -60,11 +60,11 @@ class Request(LocalRequest):
         else:
             mount = ""
         return '/' + mount.lstrip("/") + self.environ.get('PATH_INFO', '').lstrip('/')
-    
+
     @DictProperty('environ', 'wsgi.url_scheme', read_only=True)
     def scheme(self):
         raise RuntimeError('This request has no url scheme.')
-    
+
     @property
     def mountpoint(self):
         return self.app.mountpoint
@@ -78,16 +78,15 @@ class Request(LocalRequest):
         return 'wsgi.websocket' in self.environ
 
     @property
-    def is_popup(self):
-        return self.GET.get("popup") == "true"
-
-    @property
     def methods(self):
         return methods
 
     @property
     def next(self):
         return self.GET.get('next', None)
+
+    def copy(self, cls=None):
+        return super().copy(cls or Request)
 
     def __getattr__(self, name):
         try:
@@ -116,7 +115,10 @@ class Response(LocalResponse):
                 cookies[k] = v.value
                 cookies[k].update(v) # also copy cookie attributes
         return res
-    
+
+    def copy(self, cls=None):
+        return super().copy(cls or Response)
+
     def __del__(self):
         hooks.detach("after_request", self._)
 
@@ -162,7 +164,8 @@ class redirect(LocalResponse):
     def back(self, code=None):
         if code:
             self.status = code
-        self.to(request.previous_url)
+        if request.previous_url:
+            self.to(request.previous_url)
         return self
     
     def to(self, url):

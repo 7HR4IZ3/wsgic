@@ -6,7 +6,7 @@ def check(validate, fail=None, error="", back=None):
         @functools.wraps(func)
         def wrapped(*a, **kw):
             path = request.path
-            if validate(request):
+            if validate(request) is True:
                 return func(*a, **kw)
             else:
                 if callable(fail):
@@ -16,6 +16,6 @@ def check(validate, fail=None, error="", back=None):
                 elif isinstance(fail, BaseResponse):
                     return fail.with_next(path if back else None)
                 else:
-                    redirect('/').error(error).with_next(path if back else None)
+                    return redirect('/').error(error).with_next(path if back else None)
         return wrapped
     return wrapper

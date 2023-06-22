@@ -1,4 +1,4 @@
-from copy import copy
+from copy import copy, deepcopy
 
 # if __name__ == "__main__":
 #     from bottle import makelist
@@ -17,6 +17,8 @@ from ..columns import Column
  
 import json, re
 
+UNDEFINED = object()
+
 class BaseDatabase(Hooks):
 
     def __init__(self, path, debug=False, verbose=False, initialize=True, connector=None, **kwargs):
@@ -24,7 +26,7 @@ class BaseDatabase(Hooks):
         self.debug = debug
         self.path = path
         
-        self.Model = Model
+        self.Model = deepcopy(Model)
         self.Model.bind(self)
         self.Column = Column
         self.Column._table = self.Model
@@ -472,12 +474,12 @@ class BaseDatabase(Hooks):
                     self._debug(f"Removed: {compare['removed']}")
                     pass
     
-                if compare['renamed'] != {}:
-                    self.rename_column(table_name, compare['renamed'])
-                    self._debug(f"Renamed: {compare['renamed']}")
+                # if compare['renamed'] != {}:
+                #     self.rename_column(table_name, compare['renamed'])
+                #     self._debug(f"Renamed: {compare['renamed']}")
 
                 if compare['added'] != {}:
-                    self.add_column(table_name, {x: columns[x] for x in compare['added']})
+                    self.add_column(table_name, {x: columns.get(model.Meta.__alt_names__.get(x, x)) for x in compare['added']})
                     self._debug(f"Added: {compare['added']}")
         self.models[table_name] = model
 
@@ -489,7 +491,7 @@ class BaseDatabase(Hooks):
         for x in columns:
             column = columns[x]
             v = data.get(x)
-            c = None
+            c = UNDEFINED
 
             try:
                 c = column.save(v)
@@ -500,7 +502,7 @@ class BaseDatabase(Hooks):
                     column.add_error(error)
                 raise e
 
-            if action == "create" and not c and (not column.pk and not column.default and not column.null):
+            if action == "create" and c == UNDEFINED and (not column.pk and not column.default and not column.null):
                 raise AssertionError("No data specified for column '%s.%s'"%(model.__table_name__(), column.name))
 
         return ret

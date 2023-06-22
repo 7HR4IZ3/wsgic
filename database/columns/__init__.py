@@ -20,11 +20,10 @@ except ImportError:
 
 
 from ..helpers import sql_to_form, List, py_to_sql, sql_to_py
-from wsgic.services import service
 from wsgic.services.validation import BaseFilters
 
 try:
-    import formify
+    from wsgic.ui import builder as formify
 except ImportError:
     formify = None
 
@@ -134,9 +133,9 @@ class Column:
                 if length > self.max_length:
                     raise ValueError("%s.%s value exceeds max length"%(self._table.__name__, self.name))
         data = self.validate(data)
-        for validator in self.validators:
+        for item in self.validators:
             try:
-                data = validator.apply(data)
+                data = getattr(item, "apply", item)(data)
             except Exception as e:
                 for error in e.args:
                     self.add_error(error)
@@ -147,13 +146,13 @@ class Column:
             if data is None:return data
 
         data = conditional_kwargs(self.format, {"model": model})(data)
-        for formatter in self.formatters:
-            data = conditional_kwargs(formatter.apply, {"model": model})(data)
+        for item in self.formatters:
+            data = conditional_kwargs(getattr(item, "apply", item), {"model": model})(data)
         return data
     
     def setup(self, db, model):
-        [x.setup(self) for x in self.validators]
-        [x.setup(self) for x in self.formatters]
+        [x.setup(self) for x in self.validators if hasattr(x, "setup")]
+        [x.setup(self) for x in self.formatters if hasattr(x, "setup")]
     
     def form(self, **attrs):
         if self.max_length:
@@ -174,7 +173,7 @@ class Column:
         type = f'{self.type} primary key' if self.pk else self.type
         
         return f'{type}{null}{default}{unique}'
-    
+
     def _query(self):
         q = f'"{self.name}" {self._dtype()}'
         return q
@@ -716,8 +715,8 @@ class OneToManyColumn(Column):
     def __init__(self, model, *a, backref=None, **kw):
         super().__init__(*a, **kw)
         self.model = model
-        self.bck = backref
-    
+        self.bckref = backref
+
     def format(self, data, model):
         ret = List()
         if data:

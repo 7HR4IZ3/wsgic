@@ -2,7 +2,8 @@ import os, sys
 from wsgic.helpers.extra import get_global as __getglobal, set_global as __set_global__
 from wsgic.scripts import BaseScripts, script, __all_scripts
 from wsgic.scripts.exceptions import ScriptNotFound
-from .helpers import runscript, Apprunner as __app_runner__
+from .helpers import runscript
+from .runner import Apprunner as __app_runner__
 
 _root = os.getcwd()
 # sys.path.append(
@@ -23,9 +24,11 @@ def create(target, *a, **kw):
     raise ScriptNotFound
 
 @script("create-app")
-def start_app(name, type="full"):
+def start_app(name, type="full", mode="wsgi"):
+    assert (mode in ["asgi", "wsgi"]), "Invalid application type."
+
     files_full = {
-        "__init__": f"""from .app import application as {name.title()}
+        "__init__": f"""from .app import __app__ as {name.title()}
 from . import scripts
 from . import services
 """,
@@ -36,9 +39,10 @@ class {name.title()}App(WSGIApp):
     def __init__(self):
         super().__init__("{name}.urls:router", config)
 
-application = {name.title()}App()
+__app__ = {name.title()}App()
 """,
-        "views" : """from wsgic.http import request
+        "views" : """from wsgic.views import render
+from wsgic.http import request
 
 def index():
     return f"Hello World from {request.path}"
@@ -59,39 +63,39 @@ routes.get("*", index)
 # """,
         "services": """
 """,
-        "plugins": """from wsgic.plugins import *
-""",
-        "panels": """from wsgic_admin.helpers import AdminPanel, register
-from .models import *
+#         "plugins": """from wsgic.plugins import *
+# """,
+#         "panels": """from wsgic_admin.helpers import AdminPanel, register
+# from .models import *
 
-register()
-""",
-        "wsgi": f"""from .app import application as {name.title()}App
+# register()
+# """,
+        "wsgi": f"""from .app import __app__ as {name.title()}App
 
 application = {name.title()}App.wrapped_app("wsgi")
 """,
-        "asgi": f"""from .app import application as {name.title()}App
+        "asgi": f"""from .app import __app__ as {name.title()}App
 
 application = {name.title()}App.wrapped_app("asgi")
 """
     }
     files_single = {
-        "__init__": """from wsgic import WSGIApp
+        "__init__": f"""from wsgic import WSGIApp
 from wsgic.http import request
-from wsgic.routing import Router
+from wsgic.routing import create_router
 
-router, routes = Router().get_routes()
+router, routes = create_router()
 
 @routes.get("*")
 def index():
-    return f"Hello World from {request.path}"
+    return f"Hello World from {'{'}request.path{'}'}"
 
 app = WSGIApp(router)
-application = app.wrapped_app("wsgi")
+application = app.wrapped_app({mode})
 """
     }
     files_basic = {
-        "__init__": """from wsgic import WSGIApp
+        "__init__": f"""from wsgic import WSGIApp
 
 app = WSGIApp()
 
@@ -99,11 +103,11 @@ app = WSGIApp()
 def index():
     return f"Hello World"
 
-application = app.wrapped_app("wsgi")
+application = app.wrapped_app({mode})
 """
     }
     files_basic_django = {
-        "__init__": """from wsgic import WSGIApp
+        "__init__": f"""from wsgic import WSGIApp
 from wsgic.http.plugins import RequestPlugin
 
 app = WSGIApp()
@@ -111,9 +115,9 @@ app.routes.install(RequestPlugin)
 
 @app.get("/")
 def index(request):
-    return f"Hello World from {request.path}"
+    return f"Hello World from {'{'}request.path{'}'}"
 
-application = app.wrapped_app("wsgi")
+application = app.wrapped_app({mode})
 """
     }
     if type in ("full", "-f"):
@@ -128,6 +132,8 @@ application = app.wrapped_app("wsgi")
         raise ValueError
 
     cwd = str(os.getcwd())
+    nm = name
+
     if not cwd.endswith('apps'):
         # print('Not currently in apps directory')
         y = 'n' #input('Create in apps directory? [y, n, q]: ')
@@ -140,7 +146,7 @@ application = app.wrapped_app("wsgi")
             print("Terminating operation...")
             return
         print(f'Creating at {os.path.join(cwd, name)}')
-    
+
     while True:
         try:
             os.mkdir(name)
@@ -212,16 +218,11 @@ class Runner:
 
     def __init__(self, app=os.environ.get("WSGIC_APP"), *args):
         args = self.__get_run_parser().parse_args(args)
-        if not app:
-            raise ValueError("App was not specified.")
+        if not app: raise ValueError("App was not specified.")
 
-        # __set_global__("APPDIR", _root+'/apps/'+app)
-        # __set_global__("APPMODULE", app)
-        # __set_global__("installed_apps", {})
         runner = __app_runner__(app)
 
         kwargs = {}
-        # __set_global__("app_runner", runner)
 
         if args.bind:
             host = args.bind
@@ -246,8 +247,6 @@ class Runner:
             import IPython
             app = runner.app
             IPython.embed()
-        else:
-            runner.run(**kwargs)
-
+        else: runner.run(**kwargs)
 
 script("run-script", func=runscript)

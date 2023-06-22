@@ -1,11 +1,11 @@
 import types
 import inspect
-from functools import partial
+from functools import partial, wraps
 from wsgic.thirdparty.bottle import getargspec
 from wsgic.helpers import hooks
 from wsgic.helpers.extra import _get
 from wsgic.routing import Route, route
-from wsgic.http import JsonResponse, XmlResponse, request, response
+from wsgic.http import HTTPError, request, response
 from wsgic.helpers import config, messages, errors
 from wsgic.utils import conditional_kwargs
 
@@ -43,11 +43,15 @@ GLOBALS = {
 class BaseView:
     decorators = []
 
+    def decorate(self, callback):
+        for dec in getattr(self, 'decorators', []):
+            callback = dec(callback)
+        return callback
+
 class View(BaseView):
     def __init__(self, *args, **kwargs):
-        self.__name__ = self.__class__.__name__
         super().__init__(*args, **kwargs)
-        self._routes = [
+        self.__routes__ = [
             Route("", "GET", self.get, name="_get"),
             Route("", "POST", self.post, name="_post"),
             Route("<id:int>", "GET", self.retrieve, name="_retrieve"),
@@ -57,22 +61,26 @@ class View(BaseView):
 
     # Dummy request handlers .... to be overwritten
     def get(self):
-        pass
+        raise HTTPError(405, "Method not allowed.")
+
     def post(self):
-        pass
+        raise HTTPError(405, "Method not allowed.")
+
     def delete(self, id):
-        pass
+        raise HTTPError(405, "Method not allowed.")
+
     def put(self, id):
-        pass
+        raise HTTPError(405, "Method not allowed.")
+
     def retrieve(self, id):
-        pass
+        raise HTTPError(405, "Method not allowed.")
 
 class FunctionView(BaseView):
     _restricted_methods = None
 
     def __init__(self):
         super().__init__()
-        self._routes = []
+        self.__routes__ = []
         self._restricted_methods = self._restricted_methods or []
 
         for item in self.__class__.__dict__:
@@ -100,7 +108,7 @@ class FunctionView(BaseView):
 
                 paths = list(self._yieldroutes(data, name=name or "/"))
                 for path in paths:
-                    self._routes.append(
+                    self.__routes__.append(
                         Route(path, method, data, name=getattr(data, "__route_name__", "_"+item))
                     )
 
@@ -134,6 +142,12 @@ def render(source, *args, engine=adapter, **kwargs):
     )
     return templat(source, context.as_dict(), *args, template_setings=template_setings, **kwargs)
 
-# @render.register(types.FunctionType)
-# def _(func, engine=adapter):
-#     return partial(view, template_adapter=engine)
+def view(template):
+    def wrapper(func):
+        @wraps(func)
+        def wrapped(*a, **kw):
+            data = func(*a, **kw)
+            return render(template, context=(data or {}))
+        wrapped.__render_template__ = template
+        return wrapped
+    return wrapper

@@ -3,8 +3,9 @@ import os
 
 from ..http import *
 from ..routing.exceptions import *
-from ..thirdparty.bottle import ResourceManager, run
+from ..thirdparty.bottle import ResourceManager
 from ..helpers.extra import _get, set_global as _sg
+from ..server.runner import run
 
 from .base import *
 
@@ -117,8 +118,8 @@ class WSGIApp(Bottle, App):
     def websocket(self, path, callback=None, name=None, apply=None, skip=None, **config):
         return self.router.routes.websocket(path, callback, name, apply, skip, **config)
  
-    def web_route(self, path, callback=None, name=None, apply=None, skip=None, **config):
-        return self.router.routes.web_route(path, callback, name, apply, skip, **config)
+    def web_route(self, path, method='GET', callback=None, name=None, apply=None, skip=None, **config):
+        return self.router.routes.web_route(path, method, callback, name, apply, skip, **config)
  
     @property
     def _hooks(self):
@@ -128,7 +129,7 @@ class WSGIApp(Bottle, App):
     def routes(self):
         return self.router.routes.data
 
-    def _routes(self):
+    def __routes__(self):
         return self.router.routes
     
     def trigger_hook(self, name, *args, **kwargs):
@@ -160,26 +161,32 @@ class WSGIApp(Bottle, App):
         from wsgic import services
         return self
     
+    def install(self, plugin):
+        plugin = makelist(plugin)
+
+        args = _get(plugin, 1) or []
+        kwargs = _get(plugin, 2) or {}
+
+        plugin = plugin[0]
+
+        if isinstance(plugin, str):
+            plugin = load(plugin)
+            plugin = plugin(*args, **kwargs)
+        
+        self.trigger_hook("before_plugin_setup", plugin)
+
+        if hasattr(plugin, 'setup'):
+            plugin.setup(self)
+
+        self.trigger_hook("plugin_setup", plugin)
+
+        if callable(plugin) or hasattr(plugin, 'apply'):
+            self.plugins.append(plugin)
+            self.reset()
+
     def setup_plugins(self):
         for plugin in self.config.get("plugins", []) + self.router.routes.plugins:
-            plugin = makelist(plugin)
-
-            args = _get(plugin, 1) or []
-            kwargs = _get(plugin, 2) or {}
-
-            plugin = plugin[0]
-
-            if isinstance(plugin, str):
-                plugin = load(plugin)
-            plugin = plugin(*args, **kwargs)
-            
-            self.trigger_hook("before_plugin_setup", plugin)
-            if hasattr(plugin, 'setup'): plugin.setup(self)
-            self.trigger_hook("plugin_setup", plugin)
-
-            if callable(plugin) or hasattr(plugin, 'apply'):
-                self.plugins.append(plugin)
-                self.reset()
+            self.install(plugin)
 
         if not self.config.get("use.endslash", False):
             self.add_hook("before_request", self._strip)
@@ -199,7 +206,6 @@ class WSGIApp(Bottle, App):
                     hook = load(hook)
                 if callable(hook):
                     self.add_hook("after_request", hook)
-
 
     def _strip(self):
         if request.method == request.methods.GET:

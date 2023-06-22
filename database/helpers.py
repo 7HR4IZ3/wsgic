@@ -1,6 +1,8 @@
-from functools import partial, wraps
+from functools import wraps
+from threading import Thread
+from functools import partial
+from multiprocessing import Process
 from datetime import date, datetime
-from copy import copy
 import json
 
 py_to_sql = {
@@ -15,6 +17,20 @@ py_to_sql = {
 sql_to_py = {py_to_sql[x]: x for x in py_to_sql}
 sql_to_py['date'] = date.fromisoformat
 sql_to_py['timestamp'] = datetime.fromisoformat
+
+def task(func, handler=Thread, *ta, **tkw):
+    @wraps(func)
+    def wrapper(*a, **kw):
+        thread = handler(*ta, target=func, args=a, kwargs=kw, **tkw)
+        thread.start()
+        return thread
+    return wrapper
+
+def daemon_task(func):
+    return task(func, handler=Thread, daemon=True)
+
+def process(func):
+    return task(func, handler=Process)
 
 def makelist(data):  # This is just too handy
     if isinstance(data, (tuple, list, set, dict)):
@@ -41,14 +57,13 @@ class BaseObjects:
 
     def bind(self, model, db):
         self.model = model
-        # self.table_name = table_name
         self.db = db
 
     def __getattr__(self, name):
         if name in self.db._model_methods:
             func = partial(getattr(self.db, name), self.model.__table_name__())
 
-            def wrapper(*a, **kw):
+            def wrapper(*a, **kw) -> "List":
                 self.model.trigger("before_"+name, {"args": a, "kwargs": kw})
                 data = func(*a, **kw)
                 if data is not None:
@@ -59,7 +74,7 @@ class BaseObjects:
             
             return wrapper
     
-    def all(self):
+    def all(self) -> "List":
         return self.get()
     
     def get_one(self, *args, **kwargs):
@@ -67,9 +82,16 @@ class BaseObjects:
         if data:
             return data[0]
         return None
+    
+    def get_or_create(self, *args, **kwargs):
+        item = self.get_one(*args, **kwargs)
+        if item is None:
+            self.create(**kwargs)
+            item = self.get().last()
+        return item
 
 class BaseValidator:
-    def setup(self, column):
+    def setup(self, column): 
         pass
     
     def apply(self, data):
@@ -103,12 +125,15 @@ class Hooks:
         return self._hooks
     
     @classmethod
-    def trigger(self, event, *args, **kwargs):
+    def trigger(self, event, *args, apply=None, **kwargs):
         if event in self._hooks:
             for func in self._hooks[event]:
                 if callable(func):
-                    func(*args, **kwargs)
-    
+                    if apply:
+                        apply(func)(*args, **kwargs)
+                    else:
+                        func(*args, **kwargs)
+
     @classmethod
     def remove(self, event):
         if event in self._hooks:
@@ -119,11 +144,10 @@ class Hooks:
         if event in self._hooks and func in self._hooks[event]:
             self._hooks[event].remove(func)
 
-
 class List(list):
     def __or__(self, other):
         return List(set([*self, *other]))
-    
+
     def __and__(self, other):
         if self == other:
             return self
@@ -135,25 +159,28 @@ class List(list):
         elif other:
             alll = other
         return alll
-    
+
     def orderby(self, key):
         return sorted(self, key=lambda x: x[key])
-    
+
     def first(self):
         return self[0]
-    
+
     def last(self):
         return self[-1]
-    
+
     def asdict(self):
         return List([x.asdict() for x in self])
-    
+
     def serialize(self):
         return List([x.serialize() for x in self])
-    
+
     def filter(self, fn):
         return List(filter(fn, self))
-    
+
+    def map(self, fn):
+        return List(map(fn, self))
+
     def json(self):
         return json.dumps(self)
 

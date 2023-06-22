@@ -1,7 +1,7 @@
 from .thirdparty.bottle import _ImportRedirect
 
 import sys; [sys.path.append(i) for i in [
-    # "C:\\Users\\HP\\Desktop\\files\\programming\\projects",
+    "C:\\Users\\HP\\Desktop\\files\\programming\\projects",
     # "./wsgi",
     # './wsgi/apps'
 ]]

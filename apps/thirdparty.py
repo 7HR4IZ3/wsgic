@@ -20,10 +20,10 @@ class BottleApp(App):
         except AttributeError:
             self.app = getattr(self.module, "__app__")
 
-    def _wsgi(self):
+    def __wsgi__(self):
         return self.app.wsgi
     
-    def _routes(self):
+    def __routes__(self):
         routes = Routes()
         routes.data = self.app.routes
         return routes
@@ -38,7 +38,7 @@ class FlaskApp(BottleApp):
         self.map = self.app.url_map
         self.view_functions = self.app.view_functions
 
-    def _wsgi(self):
+    def __wsgi__(self):
         return self.app.wsgi_app
     
     def setup(self):
@@ -53,7 +53,7 @@ class FlaskApp(BottleApp):
             for verb in method:
                 self.routes.data.append(Route(self.remake_url(str(path)), verb, endpoint, name=alias))
 
-    def _routes(self):
+    def __routes__(self):
         return self.routes
     
     def remake_url(self, url):
@@ -90,13 +90,13 @@ class DjangoApp:
         self.URLPattern, self.URLResolver = require("django.urls.resolvers:URLPattern", "django.urls.resolvers:URLResolver")()
         self.make_routes(load("%s.%s"%(self.module, "urls")))
 
-    def _routes(self):
+    def __routes__(self):
         return self.routes
 
-    def _wsgi(self):
+    def __wsgi__(self):
         return self.wsgi_app
     
-    def _asgi(self):
+    def __asgi__(self):
         return self.asgi_app
 
     def make_routes(self, urls):
@@ -155,17 +155,17 @@ class WsgicApp(BottleApp):
         module = "".join(modules)
         super().__init__(module, name)
     
-    def _wsgi(self):
-        return self.app._wsgi()
+    def __wsgi__(self):
+        return self.app.__wsgi__()
     
-    def _asgi(self):
-        return self.app._asgi()
+    def __asgi__(self):
+        return self.app.__asgi__()
     
     def setup(self):
         return self.app.setup()
 
-    def _routes(self):
-        return self.app._routes()
+    def __routes__(self):
+        return self.app.__routes__()
 
 class SanicApp(FlaskApp):
     name = "sanic"

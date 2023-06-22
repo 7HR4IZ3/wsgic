@@ -31,18 +31,18 @@ class App:
     
     def __init__(self, module=None, name=None):
         pass
-    def _wsgi(self):
+    def __wsgi__(self):
         return self.wsgi
-    def _asgi(self):
-        return WSGIMiddleware(self._wsgi())
-    def _routes(self):
+    def __asgi__(self):
+        return WSGIMiddleware(self.__wsgi__())
+    def __routes__(self):
         return getattr(self, "routes", Routes())
     def setup(self):
         pass
 
     @cached_property
     def wrapped_wsgi(self):
-        app = self._wsgi()
+        app = self.__wsgi__()
 
         for middleware in self.config.get("middlewares.wsgi", []):
             middleware = makelist(middleware)
@@ -50,12 +50,12 @@ class App:
 
             if isinstance(main, str):
                 main = load(main)
-            app = main(app, *_get(middleware, 2, []), **_get(middleware, 3, {}))
+            app = main(app, *_get(middleware, 1, []), **_get(middleware, 2, {}))
         return app
 
     @cached_property
     def wrapped_asgi(self):
-        app = self._asgi()
+        app = self.__asgi__()
 
         for middleware in self.config.get("middlewares.asgi", []):
             middleware = makelist(middleware)
@@ -63,7 +63,7 @@ class App:
 
             if isinstance(main, str):
                 main = load(main)
-            app = main(app, *_get(middleware, 2, []), **_get(middleware, 3, {}))
+            app = main(app, *_get(middleware, 1, []), **_get(middleware, 2, {}))
         return app
 
     def wrapped_app(self, type="wsgi"):

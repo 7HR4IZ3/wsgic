@@ -4,8 +4,10 @@ if __name__ == "__main__":
     from sqlite import *
 else:
     from wsgic.helpers import config
-    from .sqlite import *
+    from .sqlite.__init_ import *
     from wsgic.helpers.extra import load_module
+import typing
+from types import NoneType
 from .base import BaseDatabase
 # from .sqlalchemy import SqlalchemyDatabase
 
@@ -106,10 +108,13 @@ from .base import BaseDatabase
 # print(admin)
 # # print(User.objects.all(), admin)
 
+if typing.TYPE_CHECKING:
+    database: typing.Union[NoneType, BaseDatabase]
+
 database = None
 databases = {
     "base": BaseDatabase,
-    "sqlite": load_module("wsgic.database.sqlite.sqlite:SqliteDatabase"),
+    "sqlite": load_module("wsgic.database.sqlite:SqliteDatabase"),
     "mysql": load_module("wsgic.database.mysql:MysqlDatabase", catch_errors=True),
 }
 
@@ -119,7 +124,7 @@ if config.get("use.database", True):
         uri, path = path.split("://")
 
         if uri in databases:
-            database: BaseDatabase = databases[uri](
+            database = databases[uri](
                 path, debug=config.get("debug", False),
                 verbose=config.get("verbose", False),
                 **config.get("config", {}, True)

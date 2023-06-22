@@ -79,6 +79,11 @@ from traceback import format_exc, print_exc
 from unicodedata import normalize
 
 try:
+    import termcolor
+except:
+    termcolor = None
+
+try:
     from ujson import dumps as json_dumps, loads as json_lds
 except ImportError:
     from json import dumps as json_dumps, loads as json_lds
@@ -1549,9 +1554,9 @@ class BaseRequest(object):
         route = self.remote_route
         return route[0] if route else None
 
-    def copy(self):
+    def copy(self, cls=None):
         """ Return a new :class:`Request` with a shallow :attr:`environ` copy. """
-        return Request(self.environ.copy())
+        return (cls or Request)(self.environ.copy())
 
     def get(self, value, default=None):
         return self.environ.get(value, default)
@@ -3624,8 +3629,6 @@ class GeventWebSocketServer(ServerAdapter):
         from geventwebsocket.handler import WebSocketHandler
         from geventwebsocket.logging import create_logger
 
-        from gevent.monkey import patch_all; patch_all()
-
         if not isinstance(threading.local(), local.local):
             msg = "Bottle requires gevent.monkey.patch_all() (before import)"
             raise RuntimeError(msg)
@@ -3639,8 +3642,9 @@ class GeventWebSocketServer(ServerAdapter):
         if not self.quiet:
             server.logger = create_logger('geventwebsocket.logging')
             server.logger.setLevel(logging.INFO)
-            server.logger.addHandler(logging.StreamHandler())
+            server.logger.addHandler(logging.StreamHandler())        
         server.serve_forever()
+
 
 server_names = {
     'cgi': CGIServer,
@@ -3760,8 +3764,8 @@ def run(app=None,
                 if p.returncode == 3:  # Child wants to be restarted
                     continue
                 p.kill()
-                # time.sleep(interval)
-                # sys.exit(p.returncode)
+                time.sleep(interval)
+                sys.exit(p.returncode)
         except KeyboardInterrupt:
             pass
         finally:
@@ -3796,20 +3800,33 @@ def run(app=None,
 
         server.quiet = server.quiet or quiet
         if not server.quiet:
-            _stderr("Bottle v%s server starting up (using %s)..." %
-                    (__version__, repr(server)))
-            if server.host.startswith("unix:"):
-                _stderr("Listening on %s" % server.host)
+            if termcolor:
+                termcolor.cprint("Bottle v%s server starting up (using %s)..." %
+                        (__version__, repr(server)), "green")
+                if server.host.startswith("unix:"):
+                    termcolor.cprint("Listening on %s" % server.host, "blue")
+                else:
+                    termcolor.cprint("Listening on http://%s:%d/" %
+                            (server.host, server.port), "blue")
+                termcolor.cprint("Hit Ctrl-C to quit.\n", "red")
             else:
-                _stderr("Listening on http://%s:%d/" %
-                        (server.host, server.port))
-            _stderr("Hit Ctrl-C to quit.\n")
+                _stderr("Bottle v%s server starting up (using %s)..." %
+                        (__version__, repr(server)))
+                if server.host.startswith("unix:"):
+                    _stderr("Listening on %s" % server.host)
+                else:
+                    _stderr("Listening on http://%s:%d/" %
+                            (server.host, server.port))
+                _stderr("Hit Ctrl-C to quit.\n")
 
         if reloader:
             lockfile = os.environ.get('BOTTLE_LOCKFILE')
             bgcheck = FileCheckerThread(lockfile, interval)
-            with bgcheck:
-                server.run(app)
+            try:
+                with bgcheck:
+                    server.run(app)
+            except:
+                pass
             if bgcheck.status == 'reload':
                 sys.exit(3)
         else:
@@ -3831,11 +3848,17 @@ class FileCheckerThread(threading.Thread):
         the lockfile gets deleted or gets too old. """
 
     def __init__(self, lockfile, interval):
-        threading.Thread.__init__(self)
+        threading.Thread.__init__(self, daemon=True)
         self.daemon = True
         self.lockfile, self.interval = lockfile, interval
         #: Is one of 'reload', 'error' or 'exit'
         self.status = None
+
+    def _bootstrap(self, *a, **kw):
+        try:
+            super()._bootstrap(*a, **kw)
+        except Exception:
+            pass
 
     def run(self):
         exists = os.path.exists

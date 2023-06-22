@@ -1,4 +1,4 @@
-from wsgic.server import request
+from wsgic.http import request
 from wsgic.thirdparty.bottle import HTTPError
 from functools import wraps
 

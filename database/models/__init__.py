@@ -26,9 +26,7 @@ class MetaManager:
 
     def __getattr__(self, name):
         if self.__meta:
-            return getattr(self.__meta, name, None) or None
-        return None
-
+            return getattr(self.__meta, name, None)
 
 def parse_annotation(ann):
     if isinstance(ann, GenericAlias):
@@ -89,11 +87,13 @@ class ModelMetaclass(type):
         result.__columns__ = columns
         # print(name, columns)
         # print()
-        result.Meta.database.init(result)
+        if not result.Meta.abstract:
+            result.Meta.database.init(result)
         return result
 
     def get_columns(model):
         annotations = model.__dict__.get("__annotations__", {})
+        annotation = None
         columns = {}
         # db = getattr(model.Meta, "database", getattr(model, "db", None))
 

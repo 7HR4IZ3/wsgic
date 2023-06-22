@@ -175,7 +175,7 @@ class DatabaseSessionStore(BaseSessionStore):
         super().__init__(session_class=session_class)
         self.db = db or SqliteDatabase('./.sessions', config.get('databases.sqlite.debug', False), verbose=False, check_same_thread=False)
         self.connect()
-    
+
     def connect(self):
         class Session(self.db.Model):
             _table_name = "wsgic_session"

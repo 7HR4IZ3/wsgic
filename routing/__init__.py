@@ -1,21 +1,18 @@
-import types, inspect, os
+import types, inspect, os, sys
 import queue
 import asyncio
 
 from functools import partial, wraps
 from threading import Thread
 
-from wsgic.thirdparty.bottle import Route as Route_, Router as Router_, makelist, py3k, redirect, getargspec, static_file
+from wsgic.thirdparty.bottle import Route as Route_, Router as Router_, makelist, py3k, redirect, getargspec, static_file, cached_property
 from wsgic.helpers import config, ordered, hooks, get_global, load_module
-from wsgic.http import BaseResponse, request, abort
+from wsgic.http import BaseResponse, request, abort, HTTPError, response
 
-# try:
-#     from py_bridge import JSBridgeServer
-# except ImportError as e:
-JSBridgeServer = None
-    # raise e
+from wsgic.handlers.webroutes import MultiServer, generate_random_id, BridgeJS
 
 from contextlib import contextmanager
+
 
 from .convertors import get_convertors
 
@@ -91,8 +88,8 @@ def compile_route(_route, **data):
     path = "/".join(str(main(x)) for x in _route.split("/"))
     return path
 
-def route(name, e=None, app=None, i=0, query=None, **kw):
-    data = ordered.get(name, index=i, app=app)
+def route(name, e=None, i=0, query=None, **kw):
+    data = ordered.get(name, index=i)
     if query:
         query = "?" + "&".join(f"{x}={str(query[x])}" for x in query)
 
@@ -169,37 +166,30 @@ class Routes:
             "prefix": ""
         }
 
-        if JSBridgeServer and not ('BOTTLE_CHILD' in os.environ):
-            self.__web = JSBridgeServer(setup=False)
+        self.wrserver = MultiServer(timeout=kw.get("web_route", {}).get("timeout"))
 
-            self.__injected = """
-                <script src="/__js_bridge_web_js__"></script>
-                <script>
-                    let client = new JSBridge.JSBridgeClient({
-                        host: location.hostname,
-                        port: location.port,
-                        path: "/__js_bridge_web_ws__"
-                    });
-                    client.set_mode("python")
-                    client.start();
-                </script>
-            """
+        self.__injected = """
+            <script src="/__web_route_js__.js"></script>
+            <script>
+                let client = new JSBridge.JSBridgeClient({
+                    host: location.hostname,
+                    port: location.port || 80,
+                    path: "/__web_route_ws__/{0}",
+                    conn_id: "{0}"
+                });
+                client.set_mode("python")
+                client.start();
+            </script>
+        """
 
-            @self.get("/__js_bridge_web_js__")
-            def _(**a):
-                return static_file(
-                    "js_bridge_web.js",
-                    root="C:\\Users\\HP\\Desktop\\files\\programming\\projects\\node_modules\\js_bridge",
-                    mimetype='application/javascript'
-                )
-            
-            self.websocket(
-                "/__js_bridge_web_ws__",
-                callback=(lambda socket, *a, **k: self.__web.handle_connection(socket))
-            )
+        @self.get("/__web_route_js__.js")
+        def _(**a):
+            return BridgeJS
 
-        else:
-            self.__web = self.__injected = None
+        self.websocket(
+            "/__web_route_ws__/<conn_id:str>",
+            callback=(lambda socket, close, conn_id: self.wrserver.handle_connection(socket, conn_id))
+        )
 
     def placeholder(self, name, regex, to_py=None, in_url=None):
         self.filters[name] = lambda conf: (regex, to_py, in_url)
@@ -271,22 +261,45 @@ class Routes:
         else:
             ordered[name] = makelist(rule)
     
-    def __responder(self, func):
+    def __responder(self, func, config=None):
         def wrapper(*a, **kw):
-            q = queue.Queue()
+            resp = {
+                'sent': False,
+                'conn_id': generate_random_id(10),
+                'queue': queue.SimpleQueue(),
+                'response': response.copy()
+            }
 
-            def put(res):
+            injected = str(self.__injected).replace("{0}", resp['conn_id'])
+
+            def send(res):
+                if resp['sent'] is True:
+                    print("Subsequent calls to 'response.send' has no effect.")
+                    return
+
+                resp['sent'] = True
+
                 if isinstance(res, BaseResponse):
-                    res.body = self.__injected + res.body
-                    q.put(res)
+                    res.body = injected + res.body
+                    resp['queue'].put(res)
                 else:
-                    q.put(self.__injected + str(res))
+                    resp['queue'].put(injected + str(res))
+            
+            def get_conn(_):
+                if not resp['sent']:
+                    raise Exception("You must send a response before accessing 'response.browser'")
+                return self.wrserver.get_connection(resp['conn_id'])
+
+            resp['response'].send = send
+            resp['response'].__class__.browser = cached_property(get_conn)
 
             def _():
-                func(put, self.__web.get_connection, *a, **kw)
+                if config and config.get("auto", False) is True: send("")
+                func(resp['response'], *a, **kw)
 
             task(_, daemon=True)()
-            return q.get()
+            return resp['queue'].get()
+
         return wrapper
 
     def __websocket_responder(self, func):
@@ -300,14 +313,13 @@ class Routes:
             def close():
                 if not websocket.closed:
                     websocket.close()
-                q.put(None)
+                q.put("")
 
             task(func, daemon=True)(
                 websocket, close, *a, **kw
             )
 
-            q.get()
-            return ''
+            return q.get()
         return wrapper
     
     def route(self, name, e=None, i=0, **kw):
@@ -386,15 +398,23 @@ class Routes:
             )
         return decorator(callback) if callback else decorator
 
-    def web_route(self, path=None, method='GET', callback=None, name=None, apply=None, skip=None, **config):
-        assert JSBridgeServer, "PyBridge is required to use 'web_route'."
+    def web_route(self, path=None, callback=None, method='GET', name=None, apply=None, skip=None, **config):
         def decorator(callback):
+            from wsgic.views import BaseView
+
             if isinstance(callback, str):
                 callback = load_module(callback)
+
+            wrapped = self.__responder(callback, config=config)
+
+            if isinstance(callback, BaseView):
+                wrapped = callback.decorate(wrapped)
+
             return self.add(
                 path=path, method=method,
-                callback=self.__responder(callback),
-                name=name, apply=apply, skip=skip, **config
+                callback=wrapped,
+                skip=skip, **config,
+                name=name, apply=apply
             )
         return decorator(callback) if callback else decorator
     
@@ -468,8 +488,9 @@ class Routes:
         return self.add(path, lambda: redirect(target, code), method, name=name)
     
     def mount(self, mount, app, apptype="wsgi", name=None, wrapped=False):
-        from wsgic.apps import get_app
         if type(app) is str:
+            from wsgic.apps import get_app
+
             app, framework = str(app).split("::")
             app = get_app(app, framework)
         else:
@@ -487,13 +508,13 @@ class Routes:
                 app_ = app.wrapped_app(apptype)
             else:
                 if apptype == "wsgi":
-                    app_ = app._wsgi()
+                    app_ = app.__wsgi__()
                 elif apptype == "asgi":
-                    app_ = app._asgi()
+                    app_ = app.__asgi__()
                 else:
                     raise Exception
-            
-            routes = app._routes()
+
+            routes = app.__routes__()
 
             for filtr in routes.filters:
                 self.filters[filtr] = routes.filters[filtr]
@@ -502,53 +523,68 @@ class Routes:
                 route.rule = _url("/" + mount + "/" + route.rule, framework != 'django')
                 if route.name:
             #         print('mount', route.name, route.rule)
-                    ordered.pop(route.name, app=name, index=-1)
-                    ordered.add(route.name, route.rule, app=name)
+                    ordered.pop(route.name, index=-1)
+                    ordered.add(route.name, route.rule)
                 self.data.append(route)
             self.mounts[url] = app_
     
     def view(self, rule="", view=None, name=None, apply=None, skip=None, **config):
         def main(view, wrapped=False):
-            if wrapped or (not hasattr(view, "_routes")):
+            if wrapped or (not hasattr(view, "__routes__")):
                 view = view()
+
+            assert isinstance(view, object), "Use @(app/routes).view only with class based views."
+
             if hasattr(view, "setup_routes"):
                 routes = view.setup_routes(self, {"name": name, "rule": rule, "apply": apply, "skip": skip, "config": config})
+                if routes is None: return
+            elif hasattr(view, "__routes__"):
+                routes = view.__routes__
             else:
-                routes = view._routes
-                
-                plugins = makelist(apply)
-                skiplist = makelist(skip) 
-            
-                for route in routes:
-                    if self.config["prefix"]:
-                        route.rule = _url(self.config['prefix'] + "/" + rule + "/" + route.rule)
-                    else:
-                        route.rule = _url(rule + "/" + route.rule)
-                    if name:
-                        route.name = name + route.name
-                        ordered.add(route.name, route.rule)
-                    route.plugins = plugins
-                    route.skiplist = skiplist
-                    route.config = config
+                raise AttributeError(
+                    "Class based views must have either 'setup_routes' function "
+                    "or a '__routes__' attributes which returns a list of routes."
+                )
 
-                    for dec in getattr(view, 'decorators', []):
-                        route.callback = dec(route.callback)
-                        
-                    self.data.append(route)
+            plugins = makelist(apply)
+            skiplist = makelist(skip) 
+
+            for route in routes:
+                if self.config["prefix"]:
+                    route.rule = _url(self.config['prefix'] + "/" + rule + "/" + route.rule)
+                else:
+                    route.rule = _url(rule + "/" + route.rule)
+                if name:
+                    route.name = name + route.name
+                    ordered.add(route.name, route.rule)
+                route.plugins = plugins
+                route.skiplist = skiplist
+                route.config = config
+
+                for dec in getattr(view, 'decorators', []):
+                    route.callback = dec(route.callback)
+                    
+                self.data.append(route)
         return main(view) if view else partial(main, wrapped=True)
     
     def expose(self, callback=None, method=["GET", "POST", 'PUT', 'DELETE', "CLI"], name=None, apply=None, skip=None, **config):
         return self.add(lambda func, name: list(yieldroutes(func)), callback, method, name=name, apply=apply, skip=skip, **config)
     
-    def static(self, rule, store=None, name=None, apply=None, skip=None, **config):
+    def static(self, rule, store=None, name=None, directory=None, apply=None, skip=None, **config):
         def main(store):
             if self.config["prefix"]:
                 rulee = _url(self.config['prefix'] + "/" + rule)
             else:
                 rulee = rule
             namee = name or rulee.strip("/")
-            rulee = rulee.rstrip("/")+"/<path:path>"
+            rulee = _url(rulee.rstrip("/")+"/<path:path>")
+
+            if not store:
+                from wsgic.handlers.files import FileSystemStorage
+                store = FileSystemStorage(directory=directory)
+
             store._main()._handlers[store.config["directory"]] = namee
+
             if namee:
                 ordered.add(namee, rulee)
             route_ = Route(rulee, "GET", lambda path: store.handler(path, **config), name=namee, plugins=makelist(apply), skiplist=makelist(skip), **config)
@@ -606,7 +642,7 @@ class Router(Router_):
         # self.filters['uuid'] = lambda conf: (r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", uuid.UUID, lambda x: str(x))
     
     def get_routes(self):
-        return [self, self.routes]
+        return self.routes
     
     def set_routes(self, routes):
         self.routes = routes
@@ -670,11 +706,12 @@ class AutoRouter(Router):
         """
             /users -> module: 'users', function: 'index'
             /users/posts -> module: 'users', function: 'posts'
-            /users/posts/12 -> module: 'users', function: 'posts', args: '12'
+            /users/posts/12/14 -> module: 'users', function: 'posts', args: [12, 14]
         """
 
         segments = path.split("/")
-        module = _get(segments, 0)
+        module = _get(segments, 0, 'index')
+
         if module:
             if self.allowed_modules and self.allowed_modules != "*":
                 if not module in self.allowed_modules:
@@ -689,14 +726,19 @@ class AutoRouter(Router):
             if func:
                 spec = getargspec(func)
                 has_starargs = not (spec[1] is None)
-                # print(spec, segments[2:], len(spec[0]), has_starargs)
                 if has_starargs:
                     args = segments[2:]
                 else:
                     args = segments[2: len(spec[0]) + 2]
-                
+
                 try:
                     return func(*args)
+                except HTTPError as e:
+                    raise e
                 except Exception as e:
-                    return abort(500, repr(e)) 
+                    return abort(500, str(e))
         return abort(404, "Page Not Found.")
+
+def create_router(router=Router, **kw) -> tuple[Router, Routes]:
+    router = router(**kw)
+    return router, router.get_routes()

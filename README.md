@@ -114,6 +114,26 @@ def index(response):
 app.run()
 ```
 
+### Static Files
+
+```python
+from wsgic import WSGIApp
+from wsgic.handlers.files import FileSystemStorage
+
+app = WSGIApp()
+
+app.static("/assets", directory="./assets", store=FileSystemStore("./assets"))
+# 'store' argument takes precedence over directory
+
+@app.get("/")
+def index(response):
+    return "Hello World!"
+
+app.run()
+```
+
+
+
 
 ## Contributing
 

@@ -132,8 +132,85 @@ def index(response):
 app.run()
 ```
 
+### Sessions
+
+```python
+from wsgic import WSGIApp
+from wsgic.http import request
+
+app = WSGIApp()
+
+@app.get("/set/<name>")
+def set(name):
+    request.session['name'] = name
+    return 'Set session name as %s'%name
+
+@app.get("/get")
+def get():
+    return 'Current session: name = "%s"'%request.session.get('name')
+
+app.run()
+```
 
 
+## Demo
+```python
+from wsgic.views import FunctionView, view
+from wsgic.http import request, redirect
+from wsgic.services import service
+from wsgic_auth.core.session import SessionAuth
+from wsgic.routing.helpers import alias, named_route
+
+authentication: SessionAuth = service("authentication")
+validation = service("validation")
+
+
+
+class HomeView(FunctionView):
+    # FunctionView creates routes from all class methods with style '{method}_{path}'
+    # Methods starting with '_' are ignored
+    # Default method is get so 'profile' is interpreted as 'get_profile'
+
+    @named_route("homepage")
+    @view("index-2.html")
+    def get_index(self):
+        return { "games": Game.objects.all() }
+
+class AuthView(FunctionView):
+
+    @view("login.html")
+    @named_route("login")
+    def get_login(self):
+        if authentication.is_logged_in(): return redirect("/")
+        return
+
+    def post_login(self):
+        print(authentication.is_logged_in())
+        if authentication.is_logged_in(): return redirect("/")
+
+        username = request.POST.get("username")
+        password = request.POST.get("password")
+        remember = request.POST.get("remember_me", False) == "on"
+
+        if validation.set_rules({
+            "username": "required",
+            "password": "required"
+        }).validate(request.POST):
+            authenticated = authentication.login(username, password, remember)
+            print(authentication.is_logged_in())
+            if authenticated:
+                return redirect().route("/").with_cookies()
+            else:
+                return redirect().back().error("Authentication failed.")
+        else:
+            error = validation.errors_list()
+            return redirect().back().error(*error)
+
+    def post_logout(self):
+        if authentication.is_logged_in():
+            authentication.logout()
+        return redirect().to("/")
+```
 
 ## Contributing
 
